@@ -2,7 +2,7 @@ import requests
 import json
 import os
 from pathlib import Path
-
+import re
 
 PLAYLIST_URLS = {
     "http://epg.one/edem_epg_ico.m3u8": "standard.m3u8",
@@ -10,38 +10,26 @@ PLAYLIST_URLS = {
     "http://epg.one/edem_epg_ico3.m3u8": "thematic_2.m3u8"
 }
 
-
 ICONS_MAP_URL = "https://raw.githubusercontent.com/Lorax121/epg_v2/main/icons_map.json"
 
-
-OLD_EPG_URL = 'x-tvg-url="http://epg.one/epg.xml.gz"'
-NEW_EPG_URL = 'x-tvg-url="https://raw.githubusercontent.com/Lorax121/epg_v2/main/data/epg.xml.gz"'
-
+OLD_EPG_URL = '#EXTM3U x-tvg-url="http://epg.one/epg.xml.gz"'
+NEW_EPG_URL = '#EXTM3U x-tvg-url="https://raw.githubusercontent.com/Lorax121/epg_v2/main/data/epg.xml.gz"'
 
 NEW_ICONS_BASE_URL = "https://raw.githubusercontent.com/Lorax121/epg_v2/main/"
 
-
 OUTPUT_DIR = "playlists"
 
-
-
 def main():
-    """
-    Главная функция для выполнения всего процесса.
-    """
     print("🚀 Запуск скрипта обновления плейлистов...")
 
-    
     repo_name = os.getenv('GITHUB_REPOSITORY')
     if not repo_name:
         raise ValueError("Ошибка: Переменная окружения GITHUB_REPOSITORY не установлена.")
 
-    
     output_path = Path(OUTPUT_DIR)
     output_path.mkdir(exist_ok=True)
     print(f"✅ Директория для результатов: '{OUTPUT_DIR}'")
 
-    
     try:
         print(f"🔄 Скачиваю карту иконок с: {ICONS_MAP_URL}")
         response = requests.get(ICONS_MAP_URL, timeout=30)
@@ -59,35 +47,39 @@ def main():
         print(f"❌ Критическая ошибка: Не удалось разобрать JSON из карты иконок: {e}")
         return
 
-    
     processed_files = []
     for url, filename in PLAYLIST_URLS.items():
         print(f"\n--- Обработка: {filename} ---")
         try:
-            
             print(f"📥 Скачиваю плейлист с: {url}")
-            playlist_content = requests.get(url, timeout=30).text
+            response = requests.get(url, timeout=30)
+            response.raise_for_status()
+            playlist_lines = response.text.splitlines()
 
-            
-            original_lines = len(playlist_content.splitlines())
-            playlist_content = playlist_content.replace(OLD_EPG_URL, NEW_EPG_URL)
-            print("🔧 Заменил ссылку на EPG.")
-
+            if playlist_lines and OLD_EPG_URL in playlist_lines[0]:
+                 playlist_lines[0] = NEW_EPG_URL
+                 print("🔧 Заменил ссылку на EPG.")
             
             replacements_count = 0
-            for old_icon_url, new_icon_path in icon_pool.items():
-                if old_icon_url in playlist_content:
-                    
-                    full_new_icon_url = f"{NEW_ICONS_BASE_URL}{new_icon_path}"
-                    
-                    playlist_content = playlist_content.replace(old_icon_url, full_new_icon_url)
-                    replacements_count += 1
-            
+            processed_lines = []
+            for line in playlist_lines:
+                if 'tvg-logo="' in line:
+                    match = re.search(r'tvg-logo="([^"]+)"', line)
+                    if match:
+                        old_icon_url = match.group(1)
+                        if old_icon_url in icon_pool:
+                            new_icon_path = icon_pool[old_icon_url]
+                            full_new_icon_url = f"{NEW_ICONS_BASE_URL}{new_icon_path}"
+                            line = line.replace(old_icon_url, full_new_icon_url)
+                            replacements_count += 1
+                processed_lines.append(line)
+
             if replacements_count > 0:
                 print(f"🖼️ Заменил {replacements_count} ссылок на иконки.")
             else:
-                print("ℹ️  Совпадений по иконкам не найдено.")
+                print("ℹ️ Совпадений по иконкам не найдено.")
 
+            playlist_content = "\n".join(processed_lines)
             
             file_path = output_path / filename
             file_path.write_text(playlist_content, encoding='utf-8')
@@ -97,28 +89,22 @@ def main():
         except requests.RequestException as e:
             print(f"❌ Ошибка при обработке {url}: {e}")
 
-    
     print("\n--- Обновление README.md ---")
     update_readme(processed_files, repo_name)
     print("✅ README.md успешно обновлен.")
     print("\n🎉 Все задачи выполнены!")
 
-
 def update_readme(playlist_files, repo_name):
-    """
-    Генерирует и сохраняет новый README.md с ссылками на плейлисты.
-    """
     readme_content = [
-        "
-        "Этот репозиторий автоматически скачивает и модифицирует плейлисты, заменяя ссылки на EPG и иконки каналов.\n",
+        "# 📺 Зеркало плейлистов с обновленными ссылками\n",
+        "Этот репозиторий автоматически скачивает и модифицирует шаблоны плейлистов от epg.one, заменяя ссылки на EPG и иконки каналов.\n",
         "Обновление происходит раз в неделю или при ручном запуске.\n",
-        "
+        "## 🔗 Ссылки на плейлисты:\n"
     ]
 
     base_url = f"https://raw.githubusercontent.com/{repo_name}/main/{OUTPUT_DIR}/"
 
-    for filename in playlist_files:
-        
+    for filename in sorted(playlist_files):
         playlist_name = Path(filename).stem.replace('_', ' ').capitalize()
         full_url = f"{base_url}{filename}"
         readme_content.append(f"* **{playlist_name}**")
@@ -126,7 +112,6 @@ def update_readme(playlist_files, repo_name):
 
     readme_path = Path("README.md")
     readme_path.write_text("\n".join(readme_content), encoding='utf-8')
-
 
 if __name__ == "__main__":
     main()
