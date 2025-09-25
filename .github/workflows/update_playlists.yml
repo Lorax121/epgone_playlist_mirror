@@ -1,0 +1,50 @@
+name: Update Playlists Weekly
+
+on:
+  
+  workflow_dispatch:
+
+  schedule:
+    
+    - cron: '0 3 * * 0'
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    
+    
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: python -m pip install requests
+
+      - name: Run playlist processing script
+        
+        run: python process_playlists.py
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+
+      - name: Commit and push changes
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          
+          
+          if git diff --quiet --exit-code playlists/ README.md; then
+            echo "No changes to commit."
+            exit 0
+          fi
+          
+          git add playlists/ README.md
+          git commit -m "Automated playlist update"
+          git push
